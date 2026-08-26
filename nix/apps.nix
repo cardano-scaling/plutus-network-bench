@@ -4,9 +4,10 @@
 { pkgs, aikenCli, cardanoCli, validators, scriptsSrc }:
 let
   lib = pkgs.lib;
-  runtimeInputs = [
+  # Our helper tools go on the FRONT of PATH (we want exactly these). cardano-cli
+  # is deliberately NOT here — see `fallback` below.
+  helperInputs = [
     pkgs.bash
-    cardanoCli
     aikenCli
     pkgs.jq
     pkgs.python3
@@ -15,7 +16,15 @@ let
     pkgs.gawk
   ];
 
-  mkApp = { name, script }:
+  # local-devnet deliberately does NOT bundle a cardano-cli/node: it uses the
+  # ones the user brings on PATH (e.g. the ouroboros-leios dev-testnet devshell),
+  # overridable via --cardano-cli / --cardano-node. It only needs curl + jq etc.
+  devnetInputs = [ pkgs.bash pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnused pkgs.gawk ];
+
+  # `inputs` go on the front of PATH; `fallback` goes on the BACK so the user's
+  # own binaries (e.g. the leios cardano-cli in a dev-testnet shell) take
+  # precedence, with our pinned build used only if none is on PATH.
+  mkApp = { name, script, inputs ? helperInputs, fallback ? [ cardanoCli ], artifacts ? true }:
     pkgs.stdenv.mkDerivation {
       pname = name;
       version = "0.1.0";
@@ -29,14 +38,17 @@ let
         cp -r . $out/libexec/pnb/
         chmod +x $out/libexec/pnb/*.sh || true
         makeWrapper $out/libexec/pnb/${script} $out/bin/${name} \
-          --prefix PATH : ${lib.makeBinPath runtimeInputs} \
-          --set-default PLUTUS_BENCH_ARTIFACTS ${validators}
+          --prefix PATH : ${lib.makeBinPath inputs} \
+          ${lib.optionalString (fallback != []) "--suffix PATH : ${lib.makeBinPath fallback}"} \
+          ${lib.optionalString artifacts "--set-default PLUTUS_BENCH_ARTIFACTS ${validators}"}
         runHook postInstall
       '';
     };
 in
 {
-  setup-bench = mkApp { name = "setup-bench"; script = "setup-bench.sh"; };
-  calibrate   = mkApp { name = "calibrate";   script = "calibrate.sh"; };
-  run-bench   = mkApp { name = "run-bench";   script = "run-bench.sh"; };
+  setup-bench  = mkApp { name = "setup-bench"; script = "setup-bench.sh"; };
+  calibrate    = mkApp { name = "calibrate";   script = "calibrate.sh"; };
+  run-bench    = mkApp { name = "run-bench";   script = "run-bench.sh"; };
+  local-devnet = mkApp { name = "local-devnet"; script = "local-devnet.sh";
+                         inputs = devnetInputs; fallback = []; artifacts = false; };
 }

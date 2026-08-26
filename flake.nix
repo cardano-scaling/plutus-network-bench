@@ -57,12 +57,14 @@
             setup-bench = apps'.setup-bench;
             calibrate = apps'.calibrate;
             run-bench = apps'.run-bench;
+            local-devnet = apps'.local-devnet;
             default = validators.applied;
           };
 
-          apps.setup-bench = { type = "app"; program = "${apps'.setup-bench}/bin/setup-bench"; };
-          apps.calibrate   = { type = "app"; program = "${apps'.calibrate}/bin/calibrate"; };
-          apps.run-bench   = { type = "app"; program = "${apps'.run-bench}/bin/run-bench"; };
+          apps.setup-bench  = { type = "app"; program = "${apps'.setup-bench}/bin/setup-bench"; };
+          apps.calibrate    = { type = "app"; program = "${apps'.calibrate}/bin/calibrate"; };
+          apps.run-bench    = { type = "app"; program = "${apps'.run-bench}/bin/run-bench"; };
+          apps.local-devnet = { type = "app"; program = "${apps'.local-devnet}/bin/local-devnet"; };
 
           devShells.default =
             import ./nix/devshell.nix { inherit pkgs aikenCli cardanoCli; };

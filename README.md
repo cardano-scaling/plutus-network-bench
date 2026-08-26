@@ -106,6 +106,22 @@ input (`--override-input cardano-node github:IntersectMBO/cardano-node/<tag>`).
 > and builds under nix; end-to-end validation against a live node is still
 > pending. The validators and the nix build are verified.
 
+## Local devnet (optional)
+
+No node to point at? `nix run "$FLAKE#local-devnet"` mints a **funded** single-node
+testnet using whatever `cardano-node`/`cardano-cli` are on your `PATH` (e.g. from
+`nix develop github:input-output-hk/ouroboros-leios#dev-testnet`) and emits a
+socket + funded `.skey` + a ready config:
+
+```bash
+nix run "$FLAKE#local-devnet" -- --out-dir ./devnet --magic 42
+nix run "$FLAKE#setup-bench" -- --config ./devnet/pnb-config.json
+```
+
+See [`docs/local-devnet.md`](docs/local-devnet.md) — note the cost-model caveat:
+the CPU/mem dials need the 350-entry PlutusV3 model, which some local node builds
+don't boot (the plumbing works regardless).
+
 ## Development
 
 ```bash
@@ -118,7 +134,7 @@ nix build .#validators   # compile + apply the validators -> artifacts + manifes
 ```
 aiken/     the two validators + shared lib (native MSM + replicateByte)
 nix/       flake modules: stdlib pin, validator build, apps, devshell
-scripts/   setup-bench / run-bench / calibrate (bash + cardano-cli) + python helpers
+scripts/   setup-bench / run-bench / calibrate / local-devnet (bash + cardano-cli) + python helpers
 schema/    JSON Schemas for config, manifest, calibration
 examples/  example configs
 docs/      design notes
