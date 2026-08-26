@@ -85,14 +85,15 @@ init_manifest() {
 
 # build a tx spending $BANK, tracking the new change UTxO as the next $BANK.
 # usage: bank_build <label> <n_explicit_outputs> -- <build args...>
+# Returns via GLOBALS (never via stdout, so callers must NOT use $(...) — that
+# would run this in a subshell and lose the $BANK/$BANK_TXID updates):
+#   BANK      -> the change UTxO (txid#nout), to spend next
+#   BANK_TXID -> the txid of this tx
 bank_build() {
   local label="$1" nout="$2"; shift 2
   [ "$1" = "--" ] && shift
   mkdir -p "$PNB_STATE/txs"
   local body="$PNB_STATE/txs/${label}.body" signed="$PNB_STATE/txs/${label}.signed"
-  # NB: `transaction build` (fee estimate) and `transaction submit` (success
-  # message) print to stdout; redirect them to stderr so command substitution
-  # capturing this function's stdout gets ONLY the txid.
   "$CARDANO_CLI" "$ERA" transaction build \
     --tx-in "$BANK" "$@" \
     --change-address "$CHANGE_ADDR" "${NET_ARGS[@]}" --out-file "$body" >&2
@@ -102,8 +103,8 @@ bank_build() {
   pnb_log "submitted '$label' tx $txid; awaiting ${txid}#${nout}"
   pnb_wait_utxo "${txid}#${nout}" || pnb_die "tx '$label' not confirmed on-chain"
   BANK="${txid}#${nout}"
+  BANK_TXID="$txid"
   manifest_set ".setup_txs += [{role:\"$label\", txid:\"$txid\"}]"
-  printf '%s' "$txid"
 }
 
 # ---- S1: fan-out fee + collateral --------------------------------------------
@@ -127,7 +128,7 @@ s1_fanout() {
     for ((j=start; j<total && n<batch; j++, n++)); do
       outs+=(--tx-out "$SEED_ADDR+${amounts[j]}")
     done
-    local txid; txid="$(bank_build "fanout_$b" "$n" -- "${outs[@]}")"
+    bank_build "fanout_$b" "$n" -- "${outs[@]}"; local txid="$BANK_TXID"
     # record each output's role/utxo by its fixed index
     for ((j=0; j<n; j++)); do
       local role="${roles[start+j]}" ref="${txid}#${j}"
@@ -153,8 +154,9 @@ s2_io_refs() {
     hash="$(jq -r --argjson i "$i" '.io_ref[$i].hash' "$ART_DIR/blueprint-manifest.json")"
     size="$(jq -r --argjson i "$i" '.io_ref[$i].size_bytes' "$ART_DIR/blueprint-manifest.json")"
     amt="$(min_utxo_for_bytes "$size")"
-    txid="$(bank_build "io_${idx}" 1 -- \
-      --tx-out "$SEED_ADDR+$amt" --tx-out-reference-script-file "$pl")"
+    bank_build "io_${idx}" 1 -- \
+      --tx-out "$SEED_ADDR+$amt" --tx-out-reference-script-file "$pl"
+    txid="$BANK_TXID"
     stake="$(stake_addr_of "$pl")"
     manifest_set ".io_refs += [{index:$i, hash:\"$hash\", refscript_utxo:\"${txid}#0\", stake_addr:\"$stake\", size_bytes:$size}]"
   done
@@ -181,7 +183,7 @@ s3_datums() {
     for ((j=start; j<n && cnt<batch; j++, cnt++)); do
       outs+=(--tx-out "$SEED_ADDR+$amt" --tx-out-inline-datum-file "$PNB_STATE/datums/datum_$(printf '%03d' "$j").json")
     done
-    local txid; txid="$(bank_build "datum_$b" "$cnt" -- "${outs[@]}")"
+    bank_build "datum_$b" "$cnt" -- "${outs[@]}"; local txid="$BANK_TXID"
     for ((j=0; j<cnt; j++)); do
       manifest_set ".datum_utxos += [{index:$((start+j)), utxo:\"${txid}#${j}\", n_points:$pts, bytes:$dbytes}]"
     done
@@ -190,13 +192,13 @@ s3_datums() {
 }
 
 # ---- S4: registrations --------------------------------------------------------
+# sets global COL_REF to the next unused collateral UTxO and advances COL_IDX.
+# Uses a global (not stdout) so it must NOT be called via $(...) — a subshell
+# would lose the COL_IDX advance and hand out the same collateral every time.
 next_collateral() {
-  # returns the next unused collateral UTxO from the manifest pool
-  local ref
-  ref="$(jq -r --argjson i "$COL_IDX" '.collateral_utxos[$i].utxo // empty' "$MANIFEST")"
-  [ -n "$ref" ] || pnb_die "ran out of collateral UTxOs (increase collateral_pool)"
+  COL_REF="$(jq -r --argjson i "$COL_IDX" '.collateral_utxos[$i].utxo // empty' "$MANIFEST")"
+  [ -n "$COL_REF" ] || pnb_die "ran out of collateral UTxOs (increase collateral_pool)"
   COL_IDX=$((COL_IDX+1))
-  printf '%s' "$ref"
 }
 
 s4_registrations() {
@@ -217,7 +219,8 @@ s4_registrations() {
         --stake-script-file "$pl" --key-reg-deposit-amt "$dep" --out-file "$cert"
       args+=(--certificate-file "$cert" --certificate-script-file "$pl" --certificate-redeemer-file "$unit")
     done
-    bank_build "reg_msm_$b" 0 -- --tx-in-collateral "$(next_collateral)" "${args[@]}" >/dev/null
+    next_collateral
+    bank_build "reg_msm_$b" 0 -- --tx-in-collateral "$COL_REF" "${args[@]}"
     for ((j=start; j<start+cnt; j++)); do
       local pl hash stake; pl="$ART_DIR/msm_main/msm_main_$(printf '%03d' "$j").plutus"
       hash="$(jq -r --argjson i "$j" '.msm_main[$i].hash' "$ART_DIR/blueprint-manifest.json")"
@@ -242,7 +245,8 @@ s4_registrations() {
       args+=(--certificate-file "$cert" --certificate-tx-in-reference "$ref" \
              --certificate-plutus-script-v3 --certificate-reference-tx-in-redeemer-file "$unit")
     done
-    bank_build "reg_io_$b" 0 -- --tx-in-collateral "$(next_collateral)" "${args[@]}" >/dev/null
+    next_collateral
+    bank_build "reg_io_$b" 0 -- --tx-in-collateral "$COL_REF" "${args[@]}"
     start="$((start+cnt))"; b=$((b+1))
   done
 }
