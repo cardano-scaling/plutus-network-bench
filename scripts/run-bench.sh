@@ -122,6 +122,45 @@ PY
   BUILT_SIGNED="$signed"
 }
 
+# Ensure at least $1 live fee UTxOs in the manifest, re-fanning-out from the seed
+# bank if earlier submissions spent the recorded pool. (Collateral is never
+# consumed by valid txs, so only fees need refreshing.)
+refresh_fee_pool() {
+  local needed="$1" uj live nlive
+  uj="$("$CARDANO_CLI" "$ERA" query utxo --address "$SEED_ADDR" "${NET_ARGS[@]}" --output-json)"
+  live="$(jq -c --argjson u "$uj" '[.fee_utxos[] | select($u[.utxo] != null)]' "$MANIFEST")"
+  nlive="$(jq 'length' <<<"$live")"
+  manifest_set ".fee_utxos = $live"
+  if [ "$nlive" -ge "$needed" ]; then pnb_log "fee pool: $nlive live UTxOs (>= $needed)"; return; fi
+
+  local short=$(( needed - nlive ))
+  pnb_log "fee pool: $nlive live; fanning out $short fresh fee UTxOs"
+  local excl bank fee_l
+  excl="$(jq -c '[.fee_utxos[].utxo,.collateral_utxos[].utxo,.io_refs[].refscript_utxo,.datum_utxos[].utxo]' "$MANIFEST")"
+  bank="$(jq -r --argjson ex "$excl" 'to_entries
+    | map(select(.value.inlineDatum==null and (.value.referenceScript//null)==null))
+    | map(select(($ex|index(.key))|not))
+    | sort_by(.value.value.lovelace) | reverse | .[0].key // empty' <<<"$uj")"
+  [ -n "$bank" ] || pnb_die "no spare bank UTxO to refill the fee pool; run setup-bench"
+  fee_l="$(awk -v a="$(cfg '.concurrency.fee_ada')" 'BEGIN{printf "%d", a*1000000}')"
+
+  local made=0 round=0
+  while [ "$made" -lt "$short" ]; do
+    local -a outs=(); local nb=0
+    while [ "$nb" -lt 100 ] && [ "$made" -lt "$short" ]; do outs+=(--tx-out "$SEED_ADDR+$fee_l"); nb=$((nb+1)); made=$((made+1)); done
+    local body="$PNB_STATE/corpus/feefan_${round}.body" signed="$PNB_STATE/corpus/feefan_${round}.signed"
+    "$CARDANO_CLI" "$ERA" transaction build --tx-in "$bank" "${outs[@]}" \
+      --change-address "$SEED_ADDR" "${NET_ARGS[@]}" --out-file "$body" >&2
+    pnb_sign "$body" "$signed" >/dev/null
+    local txid; txid="$(pnb_txid "$signed")"
+    pnb_submit "$signed" >&2
+    pnb_wait_utxo "${txid}#${nb}" || pnb_die "fee fan-out not confirmed"
+    local j; for ((j=0; j<nb; j++)); do manifest_set ".fee_utxos += [{utxo:\"${txid}#${j}\"}]"; done
+    bank="${txid}#${nb}"; round=$((round+1))
+  done
+  pnb_log "fee pool replenished to $(jq '.fee_utxos|length' "$MANIFEST") UTxOs"
+}
+
 main() {
   pnb_parse_args "$@"
   pnb_load_config
@@ -140,10 +179,11 @@ main() {
   resolve_knobs
   clamp_to_manifest
 
-  local corpus nfee
+  local corpus
   corpus="$(cfg '.concurrency.corpus_size')"
-  nfee="$(jq -r '.fee_utxos|length' "$MANIFEST")"
-  [ "$corpus" -le "$nfee" ] || { pnb_log "clamping corpus_size $corpus -> $nfee (fee UTxOs)"; corpus="$nfee"; }
+  # top the fee pool up to corpus_size (re-fanning-out from the seed if earlier
+  # runs spent it), so the corpus is repeatable without redoing setup.
+  refresh_fee_pool "$corpus"
 
   # Build a template tx (CPT=maxCollateralInputs to guarantee it builds) to learn
   # the fee and base size, then size collateral + padding for the real corpus.
