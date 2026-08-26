@@ -171,11 +171,12 @@ pnb_init_network() {
   SEED_VKEY="$(cfg '.wallet.seed_vkey')"
   if [ "$SEED_VKEY" = "null" ] || [ -z "$SEED_VKEY" ]; then
     SEED_VKEY="$PNB_STATE/seed.vkey"
-    "$CARDANO_CLI" "$ERA" key verification-key \
+    # `key` and `address` are top-level (era-agnostic) commands, not era-scoped.
+    "$CARDANO_CLI" key verification-key \
       --signing-key-file "$SEED_SKEY" --verification-key-file "$SEED_VKEY"
   fi
 
-  SEED_ADDR="$("$CARDANO_CLI" "$ERA" address build \
+  SEED_ADDR="$("$CARDANO_CLI" address build \
     --payment-verification-key-file "$SEED_VKEY" "${NET_ARGS[@]}")"
 
   CHANGE_ADDR="$(cfg '.wallet.change_address')"
