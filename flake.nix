@@ -40,6 +40,13 @@
             inherit pkgs aikenCli stdlibSrc aikenSrc;
             applyScript = ./scripts/lib/apply-instances.py;
           };
+
+          scriptsSrc = pkgs.lib.cleanSource ./scripts;
+
+          apps' = import ./nix/apps.nix {
+            inherit pkgs aikenCli cardanoCli scriptsSrc;
+            validators = validators.applied;
+          };
         in
         {
           packages = {
@@ -47,8 +54,15 @@
             cardano-cli = cardanoCli;
             validators-base = validators.base;
             validators = validators.applied;
+            setup-bench = apps'.setup-bench;
+            calibrate = apps'.calibrate;
+            run-bench = apps'.run-bench;
             default = validators.applied;
           };
+
+          apps.setup-bench = { type = "app"; program = "${apps'.setup-bench}/bin/setup-bench"; };
+          apps.calibrate   = { type = "app"; program = "${apps'.calibrate}/bin/calibrate"; };
+          apps.run-bench   = { type = "app"; program = "${apps'.run-bench}/bin/run-bench"; };
 
           devShells.default =
             import ./nix/devshell.nix { inherit pkgs aikenCli cardanoCli; };
