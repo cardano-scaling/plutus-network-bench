@@ -221,14 +221,17 @@ pnb_submit() {
   "$CARDANO_CLI" "$ERA" transaction submit --tx-file "$1" "${NET_ARGS[@]}"
 }
 
-# poll for a utxo (existence check only, never used for selection)
+# poll for a utxo (existence check only, never used for selection).
+# Tries default to $PNB_CONFIRM_TRIES (120 * 5s = 10 min) — public nets can be
+# slow to include a tx. Logs progress so it doesn't look hung.
 pnb_wait_utxo() {
-  local ref="$1" tries="${2:-60}" i
-  for ((i=0; i<tries; i++)); do
+  local ref="$1" tries="${2:-${PNB_CONFIRM_TRIES:-120}}" i
+  for ((i=1; i<=tries; i++)); do
     if "$CARDANO_CLI" "$ERA" query utxo --tx-in "$ref" "${NET_ARGS[@]}" \
          --output-json 2>/dev/null | jq -e 'length > 0' >/dev/null; then
       return 0
     fi
+    [ $((i % 6)) -eq 0 ] && pnb_log "  ...waiting for $ref (${i}/${tries}, ~$((i*5))s)"
     sleep 5
   done
   return 1

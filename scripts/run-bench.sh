@@ -103,8 +103,10 @@ PY
     a+=(--metadata-json-file "$PNB_STATE/corpus/meta_$i.json")
   fi
 
+  # redirect build's fee-estimate stdout to stderr so this function's captured
+  # stdout is only the signed-tx path.
   "$CARDANO_CLI" "$ERA" transaction build "${a[@]}" \
-    --change-address "$SEED_ADDR" "${NET_ARGS[@]}" --out-file "$body"
+    --change-address "$SEED_ADDR" "${NET_ARGS[@]}" --out-file "$body" >&2
   pnb_sign "$body" "$signed" >/dev/null
   printf '%s' "$signed"
 }

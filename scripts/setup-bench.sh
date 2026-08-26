@@ -90,12 +90,16 @@ bank_build() {
   [ "$1" = "--" ] && shift
   mkdir -p "$PNB_STATE/txs"
   local body="$PNB_STATE/txs/${label}.body" signed="$PNB_STATE/txs/${label}.signed"
+  # NB: `transaction build` (fee estimate) and `transaction submit` (success
+  # message) print to stdout; redirect them to stderr so command substitution
+  # capturing this function's stdout gets ONLY the txid.
   "$CARDANO_CLI" "$ERA" transaction build \
     --tx-in "$BANK" "$@" \
-    --change-address "$CHANGE_ADDR" "${NET_ARGS[@]}" --out-file "$body"
+    --change-address "$CHANGE_ADDR" "${NET_ARGS[@]}" --out-file "$body" >&2
   pnb_sign "$body" "$signed" >/dev/null
   local txid; txid="$(pnb_txid "$signed")"
-  pnb_submit "$signed"
+  pnb_submit "$signed" >&2
+  pnb_log "submitted '$label' tx $txid; awaiting ${txid}#${nout}"
   pnb_wait_utxo "${txid}#${nout}" || pnb_die "tx '$label' not confirmed on-chain"
   BANK="${txid}#${nout}"
   manifest_set ".setup_txs += [{role:\"$label\", txid:\"$txid\"}]"
