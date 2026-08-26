@@ -1,0 +1,23 @@
+# Aiken build outputs (produced by nix; never committed)
+aiken/build/
+aiken/artifacts/
+
+# Nix
+result
+result-*
+
+# Per-run state (manifests, corpora, reports) — never committed
+state/
+*.state/
+
+# Local secrets — never commit signing keys
+*.skey
+*.vkey
+keys/
+
+# Editor / OS
+*.swp
+.DS_Store
+
+# Generated blueprint (nix produces it from source)
+aiken/plutus.json
