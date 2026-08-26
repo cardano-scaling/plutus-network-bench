@@ -21,3 +21,7 @@ keys/
 
 # Generated blueprint (nix produces it from source)
 aiken/plutus.json
+
+# Python bytecode
+__pycache__/
+*.pyc
