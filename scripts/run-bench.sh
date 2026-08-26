@@ -72,15 +72,22 @@ build_tx() {
   local msm_i; msm_i=$(( i % NMSM ))
   local stake; stake="$(jq -r --argjson i "$msm_i" '.msm_indices[$i].stake_addr' "$MANIFEST")"
   local msm_pl idx3; idx3="$(printf '%03d' "$msm_i")"; msm_pl="$ART/msm_main/msm_main_${idx3}.plutus"
-  local fee col r body signed
+  local fee r body signed
   fee="$(jq -r --argjson i "$i" '.fee_utxos[$i].utxo' "$MANIFEST")"
-  col="$(jq -r --argjson j "$(( i % NCOL ))" '.collateral_utxos[$j].utxo' "$MANIFEST")"
   r="$PNB_STATE/corpus/r_$i.json"
   body="$PNB_STATE/corpus/tx_$(printf '%04d' "$i").body"
   signed="$PNB_STATE/corpus/tx_$(printf '%04d' "$i").signed"
   printf '{"constructor":0,"fields":[{"int":%d},{"int":%d},{"bytes":"%s"}]}' "$K" "$M" "$nonce" > "$r"
 
-  local -a a=(--tx-in "$fee" --tx-in-collateral "$col")
+  local -a a=(--tx-in "$fee")
+  # Worst-case txs carry a large fee, so collateral (collateralPercentage% of
+  # the fee) needs several collateral UTxOs to cover the amount. Collateral is
+  # only consumed on phase-2 failure, and our txs are valid, so the SAME CPT
+  # collateral UTxOs are reused by every tx — no per-tx distinctness needed.
+  local c
+  for ((c=0; c<CPT; c++)); do
+    a+=(--tx-in-collateral "$(jq -r --argjson j "$c" '.collateral_utxos[$j].utxo' "$MANIFEST")")
+  done
   local d
   for ((d=0; d<NDAT; d++)); do
     a+=(--read-only-tx-in-reference "$(jq -r --argjson i "$d" '.datum_utxos[$i].utxo' "$MANIFEST")")
@@ -103,10 +110,13 @@ PY
     a+=(--metadata-json-file "$PNB_STATE/corpus/meta_$i.json")
   fi
 
-  # redirect build's fee-estimate stdout to stderr so this function's captured
-  # stdout is only the signed-tx path.
+  # capture build output (fee estimate on stdout) so we can read the fee and
+  # keep this function's own stdout as just the signed-tx path.
+  local blog="$PNB_STATE/corpus/build_$i.log"
   "$CARDANO_CLI" "$ERA" transaction build "${a[@]}" \
-    --change-address "$SEED_ADDR" "${NET_ARGS[@]}" --out-file "$body" >&2
+    --change-address "$SEED_ADDR" "${NET_ARGS[@]}" --out-file "$body" >"$blog" 2>&1
+  cat "$blog" >&2
+  LAST_FEE="$(grep -ioE 'fee: [0-9]+' "$blog" | grep -oE '[0-9]+' | head -1)"
   pnb_sign "$body" "$signed" >/dev/null
   printf '%s' "$signed"
 }
@@ -134,10 +144,23 @@ main() {
   nfee="$(jq -r '.fee_utxos|length' "$MANIFEST")"
   [ "$corpus" -le "$nfee" ] || { pnb_log "clamping corpus_size $corpus -> $nfee (fee UTxOs)"; corpus="$nfee"; }
 
-  # determine padding once from tx[0] to hit the tx_size target
-  local pad=0
+  # Build a template tx (CPT=maxCollateralInputs to guarantee it builds) to learn
+  # the fee and base size, then size collateral + padding for the real corpus.
+  local maxcol colpct col_lov
+  maxcol="$(pp '.maxCollateralInputs')"; colpct="$(pp '.collateralPercentage')"
+  col_lov="$(awk -v a="$(cfg '.concurrency.collateral_ada')" 'BEGIN{printf "%d", a*1000000}')"
+  CPT="$maxcol"
+  local s0 tgt pad=0
+  s0="$(signed_size "$(build_tx 0 0)")"
+  # collateral needed = ceil(colpct% * fee); pick that many collateral UTxOs.
+  local need; need="$(awk -v p="$colpct" -v f="${LAST_FEE:-0}" 'BEGIN{printf "%d", (p*f + 99)/100}')"
+  CPT="$(awk -v n="$need" -v c="$col_lov" -v mx="$maxcol" 'BEGIN{v=int((n+c-1)/c); if(v<1)v=1; if(v>mx)v=mx; print v}')"
+  if [ "$((CPT * col_lov))" -lt "$need" ]; then
+    pnb_log "WARNING: collateral_ada too small: ${maxcol}x${col_lov} < needed ${need}; increase concurrency.collateral_ada and re-setup"
+  fi
+  [ "$NCOL" -ge "$CPT" ] || pnb_die "collateral pool ($NCOL) < collateral inputs per tx ($CPT); increase concurrency.collateral_pool or collateral_ada"
+  pnb_log "fee~${LAST_FEE:-?}, collateral needed ${need} -> ${CPT} collateral input(s)/tx"
   if [ "${PAD:-fit}" = "fit" ]; then
-    local s0 tgt; s0="$(signed_size "$(build_tx 0 0)")"
     tgt="$(axis_target tx_size "$(pp_max_tx_size)")"
     pad="$(awk -v t="$tgt" -v s="$s0" 'BEGIN{c=int((t-s-40)/66); if(c<0)c=0; print c}')"
     pnb_log "base tx size=$s0, tx_size target=$tgt -> $pad metadata pad entries"
@@ -161,9 +184,11 @@ main() {
   pnb_log "submitting ($mode) from tip block $tip0"
   local delay; delay="$(awk -v t="$tps" 'BEGIN{ if(t>0) printf "%.4f", 1/t; else print 0 }')"
   local start; start="$SECONDS"
+  local sflog="$PNB_STATE/corpus/submit.err"; : > "$sflog"
   for ((i=0; i<corpus; i++)); do
     if "$CARDANO_CLI" "$ERA" transaction submit \
-         --tx-file "$PNB_STATE/corpus/tx_$(printf '%04d' "$i").signed" "${NET_ARGS[@]}" >/dev/null 2>&1; then
+         --tx-file "$PNB_STATE/corpus/tx_$(printf '%04d' "$i").signed" "${NET_ARGS[@]}" \
+         >/dev/null 2>>"$sflog"; then
       ok=$((ok+1))
     else
       fail=$((fail+1))
@@ -175,15 +200,23 @@ main() {
   done
   tip1="$("$CARDANO_CLI" "$ERA" query tip "${NET_ARGS[@]}" | jq -r '.block')"
 
+  # distinct rejection reasons (compact) for the report + log
+  local reasons; reasons="$(sed 's/\x1b\[[0-9;]*m//g' "$sflog" \
+    | grep -oE '[A-Za-z]+Failure|[A-Za-z]+Error [A-Za-z]+|Insufficient[A-Za-z]*|BadInputsUTxO|ValueNotConserved[A-Za-z]*|OutsideValidityInterval[A-Za-z]*|ScriptWitness[A-Za-z]*' \
+    | sort | uniq -c | sort -rn | head -5 | sed 's/^ *//' | jq -R . | jq -s . 2>/dev/null || echo '[]')"
+  [ -n "$reasons" ] || reasons='[]'
+
   jq -n --argjson ok "$ok" --argjson fail "$fail" \
         --argjson t0 "$tip0" --argjson t1 "$tip1" \
         --argjson k "$K" --argjson m "$M" --argjson nd "$NDAT" \
-        --argjson io "$IOREFS" --argjson pad "$pad" \
+        --argjson io "$IOREFS" --argjson pad "$pad" --argjson cpt "$CPT" \
+        --argjson rz "$reasons" \
     '{schema_version:1, submitted:($ok+$fail), accepted:$ok, rejected:$fail,
-      tip_block_before:$t0, tip_block_after:$t1,
-      knobs:{k:$k, m:$m, n_datums:$nd, io_refs:$io, pad_entries:$pad}}' \
+      tip_block_before:$t0, tip_block_after:$t1, rejection_reasons:$rz,
+      knobs:{k:$k, m:$m, n_datums:$nd, io_refs:$io, pad_entries:$pad, collateral_per_tx:$cpt}}' \
     > "$PNB_STATE/run-report.json"
   pnb_log "submitted=$((ok+fail)) accepted=$ok rejected=$fail (blocks $tip0..$tip1)"
+  [ "$fail" -gt 0 ] && pnb_log "rejection reasons: $(jq -c '.rejection_reasons' "$PNB_STATE/run-report.json")"
   echo "$PNB_STATE/run-report.json"
 }
 
