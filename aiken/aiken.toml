@@ -1,0 +1,16 @@
+name = "cardano-scaling/plutus-network-bench"
+version = "0.1.0"
+compiler = "v1.1.23"
+plutus = "v3"
+license = "Apache-2.0"
+description = "Worst-case Plutus V3 validators (io_ref, msm_main) for network benchmarking"
+
+[repository]
+user = "cardano-scaling"
+project = "plutus-network-bench"
+platform = "github"
+
+[[dependencies]]
+name = "aiken-lang/stdlib"
+version = "v3.1.0"
+source = "github"
