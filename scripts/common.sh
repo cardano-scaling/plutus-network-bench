@@ -215,7 +215,16 @@ pnb_sign() {
   printf '%s' "$out"
 }
 
-pnb_txid() { "$CARDANO_CLI" "$ERA" transaction txid --tx-file "$1"; }
+# `transaction txid` prints a bare hash on cardano-cli 10.x but a JSON object
+# {"txhash":"..."} on 11.x. Normalise to the bare hash either way.
+pnb_txid() {
+  local out; out="$("$CARDANO_CLI" "$ERA" transaction txid --tx-file "$1")"
+  if printf '%s' "$out" | jq -e 'has("txhash")' >/dev/null 2>&1; then
+    printf '%s' "$out" | jq -r '.txhash'
+  else
+    printf '%s' "$out" | tr -d '[:space:]'
+  fi
+}
 
 pnb_submit() {
   "$CARDANO_CLI" "$ERA" transaction submit --tx-file "$1" "${NET_ARGS[@]}"
