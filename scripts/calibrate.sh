@@ -26,24 +26,33 @@ measure() {
     refs+=(--read-only-tx-in-reference "$ref")
   done
 
-  "$CARDANO_CLI" "$ERA" transaction build-raw \
-    --tx-in "$FEE" --tx-in-collateral "$COL" \
-    "${refs[@]}" \
-    --withdrawal "${STAKE}+0" \
-    --withdrawal-script-file "$MSM_PLUTUS" \
-    --withdrawal-redeemer-file "$r" \
-    --withdrawal-execution-units "($MAXS,$MAXM)" \
-    --tx-out "$SEED_ADDR+2000000" --fee 2000000 \
-    --protocol-params-file "$PNB_PPARAMS" \
-    --out-file "$raw" 2>/dev/null
+  local errf="$PNB_STATE/calib/err_${k}_${m}_${nd}.log"
+  if ! "$CARDANO_CLI" "$ERA" transaction build-raw \
+        --tx-in "$FEE" --tx-in-collateral "$COL" \
+        "${refs[@]}" \
+        --withdrawal "${STAKE}+0" \
+        --withdrawal-script-file "$MSM_PLUTUS" \
+        --withdrawal-redeemer-file "$r" \
+        --withdrawal-execution-units "($MAXS,$MAXM)" \
+        --tx-out "$SEED_ADDR+2000000" --fee 2000000 \
+        --protocol-params-file "$PNB_PPARAMS" \
+        --out-file "$raw" 2>"$errf"; then
+    pnb_log "    build-raw failed: $(sed 's/\x1b\[[0-9;]*m//g' "$errf" | grep -iE 'error|exceed|budget|unpriced|cost' | head -1)"
+    echo "0 0 err"; return
+  fi
 
   local out
   out="$("$CARDANO_CLI" "$ERA" transaction calculate-plutus-script-cost online \
-        --tx-file "$raw" "${NET_ARGS[@]}" 2>/dev/null || true)"
+        --tx-file "$raw" "${NET_ARGS[@]}" 2>"$errf" || true)"
   local steps mem
   steps="$(jq -r '.[0].executionUnits.steps // empty' <<<"$out" 2>/dev/null || true)"
   mem="$(jq -r '.[0].executionUnits.memory // empty' <<<"$out" 2>/dev/null || true)"
-  if [ -z "$steps" ] || [ -z "$mem" ]; then echo "0 0 err"; else echo "$steps $mem ok"; fi
+  if [ -z "$steps" ] || [ -z "$mem" ]; then
+    pnb_log "    cost failed: $(sed 's/\x1b\[[0-9;]*m//g' "$errf" | grep -iE 'error|exceed|budget|unpriced|cost|overspent' | head -1)"
+    echo "0 0 err"
+  else
+    echo "$steps $mem ok"
+  fi
 }
 
 add_sample() {
@@ -74,7 +83,10 @@ main() {
   FEE="$(jq -r '.fee_utxos[0].utxo' "$MANIFEST")"
   COL="$(jq -r '.collateral_utxos[0].utxo' "$MANIFEST")"
   SEED_ADDR="$(jq -r '.seed_address' "$MANIFEST")"
-  MAXS="$(pp_max_tx_steps)"; MAXM="$(pp_max_tx_mem)"
+  # Declare a generous per-probe budget (50x the per-tx limit) so measuring a
+  # point that would overspend the real limit still evaluates and reports its
+  # actual cost, which we then fit and extrapolate from.
+  MAXS=$(( $(pp_max_tx_steps) * 50 )); MAXM=$(( $(pp_max_tx_mem) * 50 ))
   local avail; avail="$(jq -r '.datum_utxos|length' "$MANIFEST")"
   [ "$avail" -ge 1 ] || pnb_die "no datum UTxOs in manifest (set io_setup.n_datum_utxos > 0)"
 
