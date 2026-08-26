@@ -17,9 +17,10 @@
 
 use aiken/builtin
 
-/// Bytes replicated per iteration. Large enough to amortise the ~180k step
-/// intercept toward the ~1/159 mem/step ratio, small enough for fine m control.
-pub const chunk: Int = 16384
+/// Bytes replicated per iteration. 8192 is the maximum a single replicateByte
+/// call may produce (larger errors at runtime / fails aiken's shrinker), and it
+/// amortises the ~180k step intercept toward the ~1/159 mem/step ratio.
+pub const chunk: Int = 8192
 
 /// Fill memory with M replicateByte chunks; returns an Int witness so the caller
 /// can fold it into the success gate and stop the optimiser eliminating the loop.

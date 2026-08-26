@@ -83,28 +83,30 @@ main() {
   FEE="$(jq -r '.fee_utxos[0].utxo' "$MANIFEST")"
   COL="$(jq -r '.collateral_utxos[0].utxo' "$MANIFEST")"
   SEED_ADDR="$(jq -r '.seed_address' "$MANIFEST")"
-  # Declare a generous per-probe budget (50x the per-tx limit) so measuring a
-  # point that would overspend the real limit still evaluates and reports its
-  # actual cost, which we then fit and extrapolate from.
-  MAXS=$(( $(pp_max_tx_steps) * 50 )); MAXM=$(( $(pp_max_tx_mem) * 50 ))
+  # `calculate-plutus-script-cost online` evaluates against the network's real
+  # per-tx ExUnits budget (it ignores the tx's declared units), so a probe that
+  # would overspend simply errors. We therefore sweep only WITHIN budget and
+  # stop each axis at the first over-budget probe, then fit + extrapolate.
+  MAXS="$(pp_max_tx_steps)"; MAXM="$(pp_max_tx_mem)"
   local avail; avail="$(jq -r '.datum_utxos|length' "$MANIFEST")"
   [ "$avail" -ge 1 ] || pnb_die "no datum UTxOs in manifest (set io_setup.n_datum_utxos > 0)"
 
   SAMPLES="$PNB_STATE/calib/samples.json"; echo '[]' > "$SAMPLES"
-  pnb_log "calibrating (up to $avail datum reference inputs)"
+  pnb_log "calibrating within per-tx budget (steps=$MAXS mem=$MAXM)"
 
-  # n sweep (k=1, m=0)
-  local nd s m st
+  local nd s m st mm
+  # n sweep (k=1, m=0): stop at the first datum count that overspends
   for nd in $(seq 1 "$avail"); do
     read -r s m st <<<"$(measure 1 0 "$nd")"; add_sample 1 0 "$nd" "$s" "$m" "$st"
+    [ "$st" = ok ] || { pnb_log "  n sweep hit budget at nd=$nd; stopping"; break; }
   done
-  # m sweep (k=1, nd=1)
-  local mm
-  for mm in 500 1500 3000; do
-    read -r s m st <<<"$(measure 1 "$mm" 1)"; add_sample 1 "$mm" 1 "$s" "$m" "$st"
-  done
-  # k sweep (m=0, nd=1)
+  # k sweep (m=0, nd=1): a second CPU-varying point
   read -r s m st <<<"$(measure 2 0 1)"; add_sample 2 0 1 "$s" "$m" "$st"
+  # m sweep (k=1, nd=1): increase until it overspends, then stop
+  for mm in 300 900 1500 2400; do
+    read -r s m st <<<"$(measure 1 "$mm" 1)"; add_sample 1 "$mm" 1 "$s" "$m" "$st"
+    [ "$st" = ok ] || { pnb_log "  m sweep hit budget at m=$mm; stopping"; break; }
+  done
 
   python3 "$PNB_LIB_DIR/lib/solve-knobs.py" fit \
     --samples "$SAMPLES" --pparams "$PNB_PPARAMS" \
