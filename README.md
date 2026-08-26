@@ -31,26 +31,47 @@ Two withdraw-0 stake validators, both re-submittable every block:
 This assumes the target network carries the **350-entry PlutusV3 cost model**
 (PV12+), where `bls12_381_G1_multiScalarMul` and `replicateByte` are priced.
 
+## What you provide
+
+- a **JSON config** describing the test (per-axis targets, concurrency, IO
+  setup) — see [`examples/`](examples) and [`schema/config.schema.json`](schema/config.schema.json);
+- a **node socket** for the target network;
+- a **funded seed-UTxO payment signing key** (`.skey`).
+
 ## Usage
 
 ```bash
 # 1. Set up on-chain fixtures + write a manifest to the state dir.
+#    (splits UTxOs for concurrency, deploys io_ref reference scripts, creates
+#     big-datum UTxOs, registers all msm_main + io_ref stake creds)
 nix run github:cardano-scaling/plutus-network-bench#setup-bench -- \
   --config examples/config.preprod.json \
   --socket /run/cardano/node.socket --skey payment.skey
+# -> ./state/<namespace>-<timestamp>/manifest.json
 
-# 2. (optional) Calibrate the knob -> cost map against the live network.
+# 2. Calibrate the knob -> cost map against the live network (fits ExSteps/ExMem
+#    as linear functions of k, m, n_points). Skip if you set knobs_override.
 nix run github:cardano-scaling/plutus-network-bench#calibrate -- \
-  --state-dir ./state/bench-<timestamp>
+  --state-dir ./state/<namespace>-<timestamp>
 
-# 3. Build and submit the worst-case corpus.
+# 3. Solve the config targets into knobs, build the corpus, and submit it.
 nix run github:cardano-scaling/plutus-network-bench#run-bench -- \
-  --state-dir ./state/bench-<timestamp>
+  --state-dir ./state/<namespace>-<timestamp>
+# -> run-report.json (submitted / accepted / per-run tip delta)
 ```
+
+Any config field is overridable on the command line: `--socket`, `--skey`,
+`--magic N` / `--mainnet`, `--era`, `--namespace`, or the generic
+`--set dotted.path=value`. Per-run state lives under its own timestamped
+directory, so runs against different networks never collide.
 
 The `cardano-cli` used is swappable without editing anything: pass
 `--cardano-cli /path/to/cardano-cli`, set `$CARDANO_CLI`, or override the flake
 input (`--override-input cardano-node github:IntersectMBO/cardano-node/<tag>`).
+
+> The orchestrator (`setup-bench` / `calibrate` / `run-bench`) is shellcheck-clean
+> and builds under nix; end-to-end validation against a live node is still
+> pending. The validators and the nix build are verified.
 
 ## Development
 
