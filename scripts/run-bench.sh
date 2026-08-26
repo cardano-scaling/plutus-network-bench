@@ -200,20 +200,21 @@ main() {
     fi
   done
   tip1="$("$CARDANO_CLI" "$ERA" query tip "${NET_ARGS[@]}" | jq -r '.block')"
+  [[ "$tip0" =~ ^[0-9]+$ ]] || tip0=0
+  [[ "$tip1" =~ ^[0-9]+$ ]] || tip1=0
 
-  # distinct rejection reasons (compact) for the report + log
-  local reasons; reasons="$(sed 's/\x1b\[[0-9;]*m//g' "$sflog" \
-    | grep -oE '[A-Za-z]+Failure|[A-Za-z]+Error [A-Za-z]+|Insufficient[A-Za-z]*|BadInputsUTxO|ValueNotConserved[A-Za-z]*|OutsideValidityInterval[A-Za-z]*|ScriptWitness[A-Za-z]*' \
-    | sort | uniq -c | sort -rn | head -5 | sed 's/^ *//' | jq -R . | jq -s . 2>/dev/null || echo '[]')"
-  [ -n "$reasons" ] || reasons='[]'
-
-  jq -n --argjson ok "$ok" --argjson fail "$fail" \
+  # Build the whole report in one jq, reading the raw submit error log so the
+  # rejection reasons are extracted in jq (no fragile shell/JSON handoff).
+  jq -n --rawfile errs "$sflog" \
+        --argjson ok "$ok" --argjson fail "$fail" \
         --argjson t0 "$tip0" --argjson t1 "$tip1" \
         --argjson k "$K" --argjson m "$M" --argjson nd "$NDAT" \
         --argjson io "$IOREFS" --argjson pad "$pad" --argjson cpt "$CPT" \
-        --argjson rz "$reasons" \
     '{schema_version:1, submitted:($ok+$fail), accepted:$ok, rejected:$fail,
-      tip_block_before:$t0, tip_block_after:$t1, rejection_reasons:$rz,
+      tip_block_before:$t0, tip_block_after:$t1,
+      rejection_reasons:
+        ([$errs | scan("InsufficientCollateral|BadInputsUTxO|ValueNotConserved[A-Za-z]*|ScriptWitness[A-Za-z]*|OutsideValidityInterval[A-Za-z]*|FeeTooSmall[A-Za-z]*|[A-Za-z]+Failure")]
+         | group_by(.) | map({reason: .[0], count: length}) | sort_by(-.count) | .[0:6]),
       knobs:{k:$k, m:$m, n_datums:$nd, io_refs:$io, pad_entries:$pad, collateral_per_tx:$cpt}}' \
     > "$PNB_STATE/run-report.json"
   pnb_log "submitted=$((ok+fail)) accepted=$ok rejected=$fail (blocks $tip0..$tip1)"
