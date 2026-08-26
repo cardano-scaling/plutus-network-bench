@@ -38,27 +38,60 @@ This assumes the target network carries the **350-entry PlutusV3 cost model**
 - a **node socket** for the target network;
 - a **funded seed-UTxO payment signing key** (`.skey`).
 
+## Access (private repo)
+
+This repository is **private**, so the `github:` flake fetcher won't work (it
+calls the unauthenticated GitHub API and gets a 404). Access it one of two ways:
+
+- **Over SSH** — your GitHub SSH key must have access to the repo:
+
+  ```bash
+  FLAKE='git+ssh://git@github.com/cardano-scaling/plutus-network-bench?ref=main'
+  ```
+
+  If your auth key lives on a smartcard/GPG key, make sure `SSH_AUTH_SOCK`
+  points at `gpg-agent` (`gpgconf --list-dirs agent-ssh-socket`) and the key is
+  added to GitHub.
+
+- **From a local checkout** — clone it and use the flake in place:
+
+  ```bash
+  git clone git@github.com:cardano-scaling/plutus-network-bench.git
+  cd plutus-network-bench
+  FLAKE='.'
+  ```
+
+- **With a token** — if you prefer the `github:` form, give nix a PAT with read
+  access via `access-tokens = github.com=<token>` in your nix config, then use
+  `FLAKE='github:cardano-scaling/plutus-network-bench'`.
+
 ## Usage
+
+The commands below use `$FLAKE` from above.
 
 ```bash
 # 1. Set up on-chain fixtures + write a manifest to the state dir.
 #    (splits UTxOs for concurrency, deploys io_ref reference scripts, creates
 #     big-datum UTxOs, registers all msm_main + io_ref stake creds)
-nix run github:cardano-scaling/plutus-network-bench#setup-bench -- \
-  --config examples/config.preprod.json \
+nix run "$FLAKE#setup-bench" -- \
+  --config config.json \
   --socket /run/cardano/node.socket --skey payment.skey
 # -> ./state/<namespace>-<timestamp>/manifest.json
 
 # 2. Calibrate the knob -> cost map against the live network (fits ExSteps/ExMem
 #    as linear functions of k, m, n_points). Skip if you set knobs_override.
-nix run github:cardano-scaling/plutus-network-bench#calibrate -- \
+nix run "$FLAKE#calibrate" -- \
   --state-dir ./state/<namespace>-<timestamp>
 
 # 3. Solve the config targets into knobs, build the corpus, and submit it.
-nix run github:cardano-scaling/plutus-network-bench#run-bench -- \
+nix run "$FLAKE#run-bench" -- \
   --state-dir ./state/<namespace>-<timestamp>
 # -> run-report.json (submitted / accepted / per-run tip delta)
 ```
+
+`--config` is a path on your own filesystem (the flake doesn't copy the
+[`examples/`](examples) into your working directory); copy one as a starting
+point, or pass everything as flags (`--magic N --socket … --skey …`).
 
 Any config field is overridable on the command line: `--socket`, `--skey`,
 `--magic N` / `--mainnet`, `--era`, `--namespace`, or the generic
