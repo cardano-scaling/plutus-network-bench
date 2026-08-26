@@ -1,0 +1,144 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/cardano-scaling/plutus-network-bench/schema/config.schema.json",
+  "title": "plutus-network-bench config",
+  "description": "Describes a worst-case benchmark run: target network, seed wallet, per-axis targets, IO setup, concurrency, and submission. CLI flags override any field.",
+  "type": "object",
+  "required": ["schema_version", "network", "wallet"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+
+    "network": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["mainnet", "testnet"] },
+        "magic": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Testnet magic. Required when kind=testnet; ignored for mainnet."
+        },
+        "era": {
+          "type": "string",
+          "default": "conway",
+          "description": "cardano-cli era subcommand (e.g. conway). Defaults to the CLI's latest era."
+        },
+        "socket": {
+          "type": "string",
+          "description": "Path to the node's N2C socket (CARDANO_NODE_SOCKET_PATH)."
+        },
+        "cardano_cli": {
+          "type": ["string", "null"],
+          "description": "Optional path to a specific cardano-cli. Overrides the nix-wrapped default and $CARDANO_CLI."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "testnet" } } },
+          "then": { "required": ["magic"] }
+        }
+      ]
+    },
+
+    "wallet": {
+      "type": "object",
+      "required": ["seed_skey"],
+      "additionalProperties": false,
+      "properties": {
+        "seed_skey": {
+          "type": "string",
+          "description": "Path to the funded seed-UTxO payment signing key."
+        },
+        "seed_vkey": {
+          "type": ["string", "null"],
+          "description": "Optional payment verification key; derived from seed_skey if absent."
+        },
+        "change_address": {
+          "type": ["string", "null"],
+          "description": "Optional change address; defaults to the seed key's enterprise address."
+        }
+      }
+    },
+
+    "targets": {
+      "type": "object",
+      "description": "Per-axis test target. `fraction` is a fraction of the network's queried per-tx limit; `absolute` is a raw value in the axis's unit (ExSteps, ExMem, bytes).",
+      "additionalProperties": false,
+      "properties": {
+        "ex_steps": { "$ref": "#/definitions/axisTarget" },
+        "ex_mem": { "$ref": "#/definitions/axisTarget" },
+        "ref_script_bytes": { "$ref": "#/definitions/axisTarget" },
+        "tx_size": { "$ref": "#/definitions/axisTarget" }
+      }
+    },
+
+    "knobs_override": {
+      "type": ["object", "null"],
+      "description": "When set, run-bench uses these knobs directly and skips solving targets from calibration.",
+      "additionalProperties": false,
+      "properties": {
+        "k": { "type": "integer", "minimum": 0 },
+        "m": { "type": "integer", "minimum": 0 },
+        "n_datums": { "type": "integer", "minimum": 0 },
+        "io_refs": { "type": "integer", "minimum": 0 },
+        "pad_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "io_setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "n_io_ref": { "type": "integer", "minimum": 0, "default": 12 },
+        "io_param_bytes": { "type": "integer", "minimum": 1, "default": 16000 },
+        "n_datum_utxos": { "type": "integer", "minimum": 0, "default": 8 },
+        "points_per_datum": { "type": "integer", "minimum": 1, "default": 56 }
+      }
+    },
+
+    "concurrency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "n_msm_indices": { "type": "integer", "minimum": 1, "default": 64 },
+        "corpus_size": { "type": "integer", "minimum": 1, "default": 500 },
+        "fee_ada": { "type": "number", "minimum": 1, "default": 60 },
+        "collateral_ada": { "type": "number", "minimum": 1, "default": 10 },
+        "collateral_pool": { "type": "integer", "minimum": 1, "default": 32 }
+      }
+    },
+
+    "submit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["burst", "rate"], "default": "burst" },
+        "tps": { "type": "number", "minimum": 0, "default": 20 },
+        "duration_s": { "type": "integer", "minimum": 0, "default": 120 }
+      }
+    },
+
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": { "type": "string", "default": "bench" },
+        "state_dir": { "type": "string", "default": "./state" }
+      }
+    }
+  },
+
+  "definitions": {
+    "axisTarget": {
+      "type": "object",
+      "required": ["mode", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["fraction", "absolute"] },
+        "value": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

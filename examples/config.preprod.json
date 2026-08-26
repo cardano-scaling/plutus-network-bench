@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "network": {
+    "kind": "testnet",
+    "magic": 1,
+    "era": "conway",
+    "socket": "/run/cardano/preprod/node.socket"
+  },
+  "wallet": {
+    "seed_skey": "keys/payment.skey"
+  },
+  "targets": {
+    "ex_steps": { "mode": "fraction", "value": 1.0 },
+    "ex_mem": { "mode": "fraction", "value": 1.0 },
+    "ref_script_bytes": { "mode": "fraction", "value": 0.95 },
+    "tx_size": { "mode": "fraction", "value": 0.95 }
+  },
+  "io_setup": {
+    "n_io_ref": 12,
+    "io_param_bytes": 16000,
+    "n_datum_utxos": 8,
+    "points_per_datum": 56
+  },
+  "concurrency": {
+    "n_msm_indices": 64,
+    "corpus_size": 500,
+    "fee_ada": 60,
+    "collateral_ada": 10,
+    "collateral_pool": 32
+  },
+  "submit": {
+    "mode": "burst",
+    "tps": 20,
+    "duration_s": 120
+  },
+  "run": {
+    "namespace": "preprod",
+    "state_dir": "./state"
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/cardano-scaling/plutus-network-bench/schema/manifest.schema.json",
+  "title": "plutus-network-bench manifest",
+  "description": "Written by setup-bench; consumed by calibrate and run-bench. Records the on-chain fixtures and the resolved network limits. All UTxOs are concrete txid#ix references, never re-selected by amount.",
+  "type": "object",
+  "required": ["schema_version", "namespace", "network", "limits", "artifacts", "seed_address"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "namespace": { "type": "string" },
+    "created_at": { "type": "string", "description": "ISO-8601 UTC timestamp." },
+
+    "network": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["mainnet", "testnet"] },
+        "magic": { "type": "integer" },
+        "era": { "type": "string" }
+      }
+    },
+
+    "pparams_file": {
+      "type": "string",
+      "description": "Path (relative to the state dir) of the queried protocol-parameters JSON."
+    },
+
+    "limits": {
+      "type": "object",
+      "description": "Protocol limits read once from pparams; never hardcoded.",
+      "properties": {
+        "max_tx_size": { "type": "integer" },
+        "max_tx_ex_steps": { "type": "integer" },
+        "max_tx_ex_mem": { "type": "integer" },
+        "max_block_ex_steps": { "type": "integer" },
+        "max_block_ex_mem": { "type": "integer" },
+        "max_ref_script_bytes_per_tx": { "type": "integer" },
+        "stake_deposit": { "type": "integer" },
+        "utxo_cost_per_byte": { "type": "integer" }
+      }
+    },
+
+    "artifacts": {
+      "type": "object",
+      "required": ["store_path"],
+      "properties": {
+        "store_path": {
+          "type": "string",
+          "description": "Path to the applied-validators directory (nix store path or a runtime-regenerated dir)."
+        },
+        "source": { "enum": ["nix", "runtime"] }
+      }
+    },
+
+    "seed_address": { "type": "string" },
+
+    "fee_utxos": { "$ref": "#/definitions/utxoList" },
+    "collateral_utxos": { "$ref": "#/definitions/utxoList" },
+
+    "io_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "hash", "refscript_utxo", "stake_addr"],
+        "properties": {
+          "index": { "type": "integer" },
+          "hash": { "type": "string" },
+          "refscript_utxo": { "$ref": "#/definitions/utxoRef" },
+          "stake_addr": { "type": "string" },
+          "size_bytes": { "type": "integer" }
+        }
+      }
+    },
+
+    "datum_utxos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "utxo", "n_points"],
+        "properties": {
+          "index": { "type": "integer" },
+          "utxo": { "$ref": "#/definitions/utxoRef" },
+          "n_points": { "type": "integer" },
+          "bytes": { "type": "integer" }
+        }
+      }
+    },
+
+    "msm_indices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "hash", "stake_addr"],
+        "properties": {
+          "index": { "type": "integer" },
+          "hash": { "type": "string" },
+          "stake_addr": { "type": "string" },
+          "refscript_utxo": { "$ref": "#/definitions/utxoRef" }
+        }
+      }
+    },
+
+    "setup_txs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "txid"],
+        "properties": {
+          "role": { "type": "string" },
+          "index": { "type": "integer" },
+          "txid": { "type": "string" }
+        }
+      }
+    }
+  },
+
+  "definitions": {
+    "utxoRef": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}#[0-9]+$",
+      "description": "A concrete transaction output reference, txid#ix."
+    },
+    "utxoList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["utxo"],
+        "properties": {
+          "utxo": { "$ref": "#/definitions/utxoRef" },
+          "lovelace": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

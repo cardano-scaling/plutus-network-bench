@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/cardano-scaling/plutus-network-bench/schema/calibration.schema.json",
+  "title": "plutus-network-bench calibration",
+  "description": "Written by calibrate; consumed by run-bench (solve-knobs). Maps the msm_main knobs (k, m, n_points) to measured (ExSteps, ExMem) via linear fits, so a config target can be inverted into knobs.",
+  "type": "object",
+  "required": ["schema_version", "cost_model_source", "limits", "fits"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "created_at": { "type": "string" },
+    "cost_model_source": {
+      "enum": ["onchain", "aiken"],
+      "description": "onchain = cardano-cli calculate-plutus-script-cost (authoritative); aiken = offline UPLC metering (approximate)."
+    },
+
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_tx_ex_steps": { "type": "integer" },
+        "max_tx_ex_mem": { "type": "integer" },
+        "max_tx_size": { "type": "integer" }
+      }
+    },
+
+    "fits": {
+      "type": "object",
+      "required": ["steps", "mem"],
+      "description": "steps ~= a_n*n_points + a_k*k + a_m*m + c ; mem likewise.",
+      "properties": {
+        "steps": { "$ref": "#/definitions/fit" },
+        "mem": { "$ref": "#/definitions/fit" }
+      }
+    },
+
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["k", "m", "n_points", "ex_steps", "ex_mem"],
+        "properties": {
+          "k": { "type": "integer" },
+          "m": { "type": "integer" },
+          "n_points": { "type": "integer" },
+          "ex_steps": { "type": "integer" },
+          "ex_mem": { "type": "integer" },
+          "status": { "type": "string" }
+        }
+      }
+    },
+
+    "solved_presets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "k": { "type": "integer" },
+          "m": { "type": "integer" },
+          "n_datums": { "type": "integer" },
+          "io_refs": { "type": "integer" },
+          "pad_bytes": { "type": "integer" },
+          "predicted": {
+            "type": "object",
+            "properties": {
+              "ex_steps": { "type": "number" },
+              "ex_mem": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "definitions": {
+    "fit": {
+      "type": "object",
+      "required": ["a_n", "a_k", "a_m", "c"],
+      "properties": {
+        "a_n": { "type": "number" },
+        "a_k": { "type": "number" },
+        "a_m": { "type": "number" },
+        "c": { "type": "number" }
+      }
+    }
+  }
+}
