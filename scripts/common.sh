@@ -42,12 +42,14 @@ JSON
 # Unrecognised args are collected into PNB_REST[] for the calling tool.
 pnb_parse_args() {
   PNB_CONFIG_FILE=""
+  PNB_RESUME_DIR=""
   PNB_SETS=()
   PNB_REST=()
   declare -gA PNB_OVERRIDE=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --config)        PNB_CONFIG_FILE="$2"; shift 2 ;;
+      --resume)        PNB_RESUME_DIR="$2"; shift 2 ;;
       --socket)        PNB_OVERRIDE[network.socket]="$2"; shift 2 ;;
       --skey)          PNB_OVERRIDE[wallet.seed_skey]="$2"; shift 2 ;;
       --magic)         PNB_OVERRIDE[network.kind]="testnet"; PNB_OVERRIDE[network.magic]="$2"; shift 2 ;;
@@ -101,20 +103,34 @@ pnb_load_config() {
       then .[$e.key] |= deepmerge($e.value) else .[$e.key] = $e.value end);
     deepmerge($a) | deepmerge($b)')"
 
-  # apply shorthand flag overrides
-  local k
+  PNB_CFG="$merged"
+  pnb_apply_overrides
+}
+
+# Apply CLI flag + --set overrides on top of the current $PNB_CFG. Used by
+# pnb_load_config and again on --resume (so socket/skey/cli can change).
+pnb_apply_overrides() {
+  local k kv key val
   for k in "${!PNB_OVERRIDE[@]}"; do
-    merged="$(jq -c ".$(_pnb_jq_path "$k") = $(_pnb_json_value "${PNB_OVERRIDE[$k]}")" <<<"$merged")"
+    PNB_CFG="$(jq -c ".$(_pnb_jq_path "$k") = $(_pnb_json_value "${PNB_OVERRIDE[$k]}")" <<<"$PNB_CFG")"
   done
-  # apply --set dotted.path=value overrides
-  local kv key val
   for kv in "${PNB_SETS[@]:-}"; do
     [ -z "$kv" ] && continue
     key="${kv%%=*}"; val="${kv#*=}"
-    merged="$(jq -c ".$(_pnb_jq_path "$key") = $(_pnb_json_value "$val")" <<<"$merged")"
+    PNB_CFG="$(jq -c ".$(_pnb_jq_path "$key") = $(_pnb_json_value "$val")" <<<"$PNB_CFG")"
   done
+}
 
-  PNB_CFG="$merged"
+# Resume into an existing state dir: load its resolved config, re-apply live CLI
+# overrides (socket/skey/cli paths may differ), and reuse its manifest.
+pnb_resume_state() {
+  PNB_STATE="$PNB_RESUME_DIR"
+  [ -d "$PNB_STATE" ] || pnb_die "resume dir not found: $PNB_STATE"
+  [ -f "$PNB_STATE/config.resolved.json" ] || pnb_die "no config.resolved.json in $PNB_STATE"
+  [ -f "$PNB_STATE/manifest.json" ] || pnb_die "no manifest.json in $PNB_STATE (nothing to resume)"
+  PNB_CFG="$(jq -c . "$PNB_STATE/config.resolved.json")"
+  pnb_apply_overrides
+  pnb_log "resuming state dir: $PNB_STATE"
 }
 
 # read a value from the merged config
