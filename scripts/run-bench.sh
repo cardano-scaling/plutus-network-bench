@@ -118,7 +118,8 @@ PY
   cat "$blog" >&2
   LAST_FEE="$(grep -ioE 'fee: [0-9]+' "$blog" | grep -oE '[0-9]+' | head -1)"
   pnb_sign "$body" "$signed" >/dev/null
-  printf '%s' "$signed"
+  # return via globals (never $(...), which would lose LAST_FEE in a subshell)
+  BUILT_SIGNED="$signed"
 }
 
 main() {
@@ -151,7 +152,7 @@ main() {
   col_lov="$(awk -v a="$(cfg '.concurrency.collateral_ada')" 'BEGIN{printf "%d", a*1000000}')"
   CPT="$maxcol"
   local s0 tgt pad=0
-  s0="$(signed_size "$(build_tx 0 0)")"
+  build_tx 0 0; s0="$(signed_size "$BUILT_SIGNED")"
   # collateral needed = ceil(colpct% * fee); pick that many collateral UTxOs.
   local need; need="$(awk -v p="$colpct" -v f="${LAST_FEE:-0}" 'BEGIN{printf "%d", (p*f + 99)/100}')"
   CPT="$(awk -v n="$need" -v c="$col_lov" -v mx="$maxcol" 'BEGIN{v=int((n+c-1)/c); if(v<1)v=1; if(v>mx)v=mx; print v}')"
@@ -171,7 +172,7 @@ main() {
   pnb_log "building corpus of $corpus txs (k=$K m=$M n_datums=$NDAT io_refs=$IOREFS pad=$pad)"
   local i
   for ((i=0; i<corpus; i++)); do
-    build_tx "$i" "$pad" >/dev/null
+    build_tx "$i" "$pad"
     [ $(( (i+1) % 25 )) -eq 0 ] && pnb_log "  built $((i+1))/$corpus"
   done
   local last; last="$(signed_size "$PNB_STATE/corpus/tx_0000.signed")"
