@@ -92,7 +92,7 @@
       "additionalProperties": false,
       "properties": {
         "n_io_ref": { "type": "integer", "minimum": 0, "default": 12 },
-        "io_param_bytes": { "type": "integer", "minimum": 1, "default": 16000 },
+        "io_param_bytes": { "type": "integer", "minimum": 1, "default": 15000 },
         "n_datum_utxos": { "type": "integer", "minimum": 0, "default": 8 },
         "points_per_datum": { "type": "integer", "minimum": 1, "default": 56 }
       }

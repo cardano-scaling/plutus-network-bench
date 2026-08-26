@@ -18,7 +18,7 @@
   "knobs_override": null,
   "io_setup": {
     "n_io_ref": 12,
-    "io_param_bytes": 16000,
+    "io_param_bytes": 15000,
     "n_datum_utxos": 4,
     "points_per_datum": 56
   },

@@ -13,7 +13,9 @@
 , aikenSrc
 , applyScript
 , nIoRef ? 16
-, ioParamBytes ? 16000
+  # 15000-byte tag -> ~15668 B applied script, which still fits (with tx overhead)
+  # under the 16384 maxTxSize of the reference-script creation tx.
+, ioParamBytes ? 15000
 , nMsmIndices ? 64
 , namespace ? "plutus-bench"
 }:
