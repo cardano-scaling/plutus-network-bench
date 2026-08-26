@@ -126,9 +126,12 @@ PY
 # bank if earlier submissions spent the recorded pool. (Collateral is never
 # consumed by valid txs, so only fees need refreshing.)
 refresh_fee_pool() {
-  local needed="$1" uj live nlive
-  uj="$("$CARDANO_CLI" "$ERA" query utxo --address "$SEED_ADDR" "${NET_ARGS[@]}" --output-json)"
-  live="$(jq -c --argjson u "$uj" '[.fee_utxos[] | select($u[.utxo] != null)]' "$MANIFEST")"
+  local needed="$1" ufile live nlive
+  # the seed address can hold hundreds of UTxOs, so write the query to a file and
+  # read it with --slurpfile ($u[0]) rather than passing it on the command line.
+  ufile="$PNB_STATE/corpus/seed_utxo.json"
+  "$CARDANO_CLI" "$ERA" query utxo --address "$SEED_ADDR" "${NET_ARGS[@]}" --output-json > "$ufile"
+  live="$(jq -c --slurpfile u "$ufile" '[.fee_utxos[] | select($u[0][.utxo] != null)]' "$MANIFEST")"
   nlive="$(jq 'length' <<<"$live")"
   manifest_set ".fee_utxos = $live"
   if [ "$nlive" -ge "$needed" ]; then pnb_log "fee pool: $nlive live UTxOs (>= $needed)"; return; fi
@@ -140,7 +143,7 @@ refresh_fee_pool() {
   bank="$(jq -r --argjson ex "$excl" 'to_entries
     | map(select(.value.inlineDatum==null and (.value.referenceScript//null)==null))
     | map(select(($ex|index(.key))|not))
-    | sort_by(.value.value.lovelace) | reverse | .[0].key // empty' <<<"$uj")"
+    | sort_by(.value.value.lovelace) | reverse | .[0].key // empty' "$ufile")"
   [ -n "$bank" ] || pnb_die "no spare bank UTxO to refill the fee pool; run setup-bench"
   fee_l="$(awk -v a="$(cfg '.concurrency.fee_ada')" 'BEGIN{printf "%d", a*1000000}')"
 
