@@ -142,7 +142,7 @@ refresh_fee_pool() {
   excl="$(jq -c '[.fee_utxos[].utxo,.collateral_utxos[].utxo,.io_refs[].refscript_utxo,.datum_utxos[].utxo]' "$MANIFEST")"
   bank="$(jq -r --argjson ex "$excl" 'to_entries
     | map(select(.value.inlineDatum==null and (.value.referenceScript//null)==null))
-    | map(select(($ex|index(.key))|not))
+    | map(select(.key as $k | ($ex | index($k)) == null))
     | sort_by(.value.value.lovelace) | reverse | .[0].key // empty' "$ufile")"
   [ -n "$bank" ] || pnb_die "no spare bank UTxO to refill the fee pool; run setup-bench"
   fee_l="$(awk -v a="$(cfg '.concurrency.fee_ada')" 'BEGIN{printf "%d", a*1000000}')"

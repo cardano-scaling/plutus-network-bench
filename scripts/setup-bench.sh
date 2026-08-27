@@ -115,7 +115,8 @@ bootstrap_bank() {
   excl="$(jq -c '[.fee_utxos[].utxo,.collateral_utxos[].utxo,.io_refs[].refscript_utxo,.datum_utxos[].utxo]' "$MANIFEST")"
   mapfile -t ALLUTXO < <(jq -r --argjson ex "$excl" 'to_entries
     | map(select(.value.inlineDatum==null and (.value.referenceScript//null)==null))
-    | map(.key) | map(select(($ex|index(.))|not)) | .[]' <<<"$uj")
+    | map(select(.key as $k | ($ex | index($k)) == null))
+    | map(.key) | .[]' <<<"$uj")
   local n="${#ALLUTXO[@]}"
   [ "$n" -ge 1 ] || pnb_die "no spendable pure-ada UTxO at seed address $SEED_ADDR"
   if [ "$n" -eq 1 ]; then
