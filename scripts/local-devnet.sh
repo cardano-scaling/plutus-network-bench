@@ -312,11 +312,29 @@ eb_status() {
 # ============================================================================
 current_v3() { q query protocol-parameters 2>/dev/null | jq -r '.costModels.PlutusV3|length' 2>/dev/null || echo 0; }
 current_epoch() { q query tip 2>/dev/null | jq -r '.epoch' 2>/dev/null || echo 0; }
+# Max active DRep voting stake (0 until the genesis delegations enter the active
+# stake snapshot, ~epoch 2). Tolerant of query hiccups.
+drep_active_stake() {
+  q query drep-stake-distribution --all-dreps --output-json 2>/dev/null \
+    | jq -r '[.[]?] | map(select(type=="number")) + [0] | max' 2>/dev/null || echo 0
+}
 
 phase_govern() {
   local have; have="$(current_v3)"
   log "phase 5/6 govern: PlutusV3 model currently $have entries; enacting 350"
   [ "$have" -eq 350 ] && { log "already 350; skipping"; return; }
+
+  # Wait for DRep stake to become ACTIVE before proposing. Genesis delegations
+  # only enter the active snapshot ~2 epochs in; proposing/voting before then
+  # means the votes carry no weight and the action expires unratified (the
+  # intermittent failure this guards against).
+  local i s
+  log "  waiting for DRep voting stake to activate (epoch $(current_epoch))…"
+  for ((i=0; i<60; i++)); do
+    s="$(drep_active_stake)"; [ -z "$s" ] && s=0
+    [ "$s" -gt 0 ] 2>/dev/null && { log "  DRep active stake ready ($s at epoch $(current_epoch))"; break; }
+    sleep 5
+  done
 
   local pay_skey pay_addr fee dep ret_vk
   pay_skey="$GEN/utxo-keys/utxo1/utxo.skey"
