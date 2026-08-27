@@ -99,6 +99,36 @@ def cmd_solve(args):
         m = (args.mem - fm["c"] - fm["a_k"] * k) / fm["a_m"]
         n = (args.steps - fs["c"] - fs["a_k"] * k - fs["a_m"] * m) / fs["a_n"]
     n = max(0, round(n)); m = max(0, round(m))
+
+    # Clamp to the per-tx budget. The solved (n, m) can exceed a budget when the
+    # requested (steps, mem) pair is jointly infeasible on this cost model — e.g.
+    # saturating mem needs an `m` whose replicateByte work alone blows the steps
+    # budget several times over. Reduce m (the steps-heavy knob) then n so both
+    # predicted axes stay within budget, and warn with what was actually hit.
+    def p_steps(nn, mm): return fs["a_n"] * nn + fs["a_k"] * k + fs["a_m"] * mm + fs["c"]
+    def p_mem(nn, mm):   return fm["a_n"] * nn + fm["a_k"] * k + fm["a_m"] * mm + fm["c"]
+    lim = cal.get("limits", {})
+    # Clamp to a safety margin below the ceiling: the fit is an extrapolation, so
+    # aiming at exactly 100% risks the odd tx tipping over maxTxExUnits (rejected).
+    SAFETY = 0.98
+    S = lim.get("max_tx_ex_steps"); M = lim.get("max_tx_ex_mem")
+    Sc = S * SAFETY if S else None; Mc = M * SAFETY if M else None
+    n0, m0 = n, m
+    if S and M:
+        caps = []
+        if fs["a_m"] > 0: caps.append((Sc - fs["c"] - fs["a_k"] * k - fs["a_n"] * n) / fs["a_m"])
+        if fm["a_m"] > 0: caps.append((Mc - fm["c"] - fm["a_k"] * k - fm["a_n"] * n) / fm["a_m"])
+        if caps: m = max(0, min(m, int(min(caps))))
+        if fs["a_n"] > 0:
+            m_cap_n = int((Sc - fs["c"] - fs["a_k"] * k - fs["a_m"] * m) / fs["a_n"])
+            n = max(0, min(n, m_cap_n))
+        if (n, m) != (n0, m0):
+            sys.stderr.write(
+                "[solve-knobs] target infeasible within per-tx budget "
+                f"(would be steps={p_steps(n0, m0)/S*100:.0f}% mem={p_mem(n0, m0)/M*100:.0f}%); "
+                f"clamped to k={k} m={m} n={n} "
+                f"(steps={p_steps(n, m)/S*100:.0f}% mem={p_mem(n, m)/M*100:.0f}% of budget)\n")
+
     n_datums = max(1, round(n / args.points_per_datum)) if n > 0 else 0
     out = {"k": k, "m": m, "n_points": n, "n_datums": n_datums,
            "predicted": {
