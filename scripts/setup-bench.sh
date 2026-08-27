@@ -165,11 +165,12 @@ s1_fanout() {
     local -a outs=(); local nb=0 j
     for ((j=start; j<total && nb<batch; j++, nb++)); do outs+=(--tx-out "$SEED_ADDR+${amounts[j]}"); done
     bank_build "fanout_$b" "$nb" -- "${outs[@]}"; local txid="$BANK_TXID"
-    for ((j=0; j<nb; j++)); do
-      if [ "${roles[start+j]}" = fee ]; then manifest_set ".fee_utxos += [{utxo:\"${txid}#${j}\"}]"
-      else manifest_set ".collateral_utxos += [{utxo:\"${txid}#${j}\"}]"; fi
+    local r
+    for ((r=0; r<nb; r++)); do
+      if [ "${roles[start+r]}" = fee ]; then manifest_set ".fee_utxos += [{utxo:\"${txid}#${r}\"}]"
+      else manifest_set ".collateral_utxos += [{utxo:\"${txid}#${r}\"}]"; fi
     done
-    start="$j"; b=$((b+1))
+    start=$((start+nb)); b=$((b+1))
   done
 }
 
