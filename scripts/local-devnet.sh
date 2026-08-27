@@ -9,6 +9,10 @@
 # funded UTxO key you control, so you can actually submit.
 #
 #   local-devnet --out-dir ./devnet --magic 42 [--env-url <base>] [--no-launch]
+#   local-devnet --stop --out-dir ./devnet          # terminate a running devnet
+#
+# Re-running against the same --out-dir first stops any node still running for it
+# and wipes the old db, so it always respins a fresh chain.
 #
 # Flow:
 #   1. cardano-cli <era> genesis create-testnet-data  -> genesis + funded keys + a BP
@@ -39,9 +43,25 @@ UTXO_KEYS=2
 PORT=3001
 START_OFFSET=30                    # start-time this many seconds in the future
 LAUNCH=1
+STOP=0
 
 die() { printf '[devnet] ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[devnet] %s\n' "$*" >&2; }
+
+# stop a running devnet: kill its process group via the pidfile (fallback: pkill
+# the cardano-node whose command line references this out-dir), then clear the
+# socket. Never matches nodes for other directories (e.g. a Musashi relay).
+stop_devnet() {
+  local dir="$1" pf="$1/devnet.pid" pid
+  if [ -f "$pf" ] && pid="$(cat "$pf" 2>/dev/null)" && [ -n "$pid" ]; then
+    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    log "stopped devnet (pgid/pid $pid)"
+    rm -f "$pf"
+  else
+    pkill -TERM -f "cardano-node.*$dir" 2>/dev/null && log "stopped cardano-node matching $dir" || true
+  fi
+  rm -f "$dir/node.socket"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -55,11 +75,20 @@ while [ $# -gt 0 ]; do
     --total-supply)  TOTAL_SUPPLY="$2"; shift 2 ;;
     --port)          PORT="$2"; shift 2 ;;
     --no-launch)     LAUNCH=0; shift 1 ;;
+    --stop)          STOP=1; shift 1 ;;
     -h|--help)
       sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
+
+# --stop: terminate an existing devnet and exit (no cli/node needed).
+if [ "$STOP" -eq 1 ]; then
+  OUT_DIR="$(cd "$OUT_DIR" 2>/dev/null && pwd || echo "$OUT_DIR")"
+  [ -d "$OUT_DIR" ] || die "out-dir not found: $OUT_DIR"
+  stop_devnet "$OUT_DIR"
+  exit 0
+fi
 
 CLI="${CLI_BIN:-cardano-cli}"
 NODE="${NODE_BIN:-cardano-node}"
@@ -69,7 +98,9 @@ log "cardano-cli: $($CLI --version 2>/dev/null | head -1)"
 
 OUT_DIR="$(mkdir -p "$OUT_DIR" && cd "$OUT_DIR" && pwd)"     # absolute
 GEN="$OUT_DIR/gen"
-rm -rf "$GEN"
+# fresh chain: stop any prior node for this dir and wipe old genesis + db + socket
+stop_devnet "$OUT_DIR"
+rm -rf "$GEN" "$OUT_DIR/db" "$OUT_DIR/node.socket"
 
 # 1. mint genesis + funded keys + a block producer
 START_TIME="$(date -u -d "+${START_OFFSET} seconds" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
@@ -136,7 +167,10 @@ if [ "$LAUNCH" -eq 1 ]; then
     --shelley-vrf-key "$P/vrf.skey" \
     --shelley-operational-certificate "$P/opcert.cert" \
     < /dev/null > "$OUT_DIR/node.log" 2>&1 &
-  log "node pid $! ; log $OUT_DIR/node.log"
+  # setsid makes the child a session leader, so its PID == PGID: kill -- -PID
+  # (done by --stop / stop_devnet) tears down the whole node.
+  echo "$!" > "$OUT_DIR/devnet.pid"
+  log "node pid $! ; log $OUT_DIR/node.log ; stop: local-devnet --stop --out-dir $OUT_DIR"
   log "waiting for socket $SOCKET ..."
   for _ in $(seq 1 60); do [ -S "$SOCKET" ] && break; sleep 2; done
   [ -S "$SOCKET" ] || die "node socket did not appear; check $OUT_DIR/node.log"
