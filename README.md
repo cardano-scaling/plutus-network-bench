@@ -101,10 +101,43 @@ directory, so runs against different networks never collide.
 The `cardano-cli` used is swappable without editing anything: pass
 `--cardano-cli /path/to/cardano-cli`, set `$CARDANO_CLI`, or override the flake
 input (`--override-input cardano-node github:IntersectMBO/cardano-node/<tag>`).
+For networks whose era isn't the flake's default `cardano-cli` (e.g. a Leios
+dijkstra net), enter a shell that has the matching cli — the wrapped apps put
+their bundled cli *behind* your `PATH`, so yours wins.
 
-> The orchestrator (`setup-bench` / `calibrate` / `run-bench`) is shellcheck-clean
-> and builds under nix; end-to-end validation against a live node is still
-> pending. The validators and the nix build are verified.
+### Configure once, run repeatedly
+
+`setup-bench` and `calibrate` are **one-time** per (network + validator +
+fixture shape); `run-bench` is the **repeatable execution**:
+
+- `setup-bench` deploys the reference scripts, datum UTxOs, and stake
+  registrations and writes `manifest.json` — these persist on-chain and in the
+  state dir.
+- `calibrate` writes `calibration.json` — valid as long as the network's cost
+  model is unchanged.
+- `run-bench` re-runs as often as you like against the same `--state-dir`: it
+  solves knobs from your targets, **auto-replenishes the fee pool** (re-fanning
+  out from the seed when earlier runs spent it), builds the corpus, and submits.
+  Collateral is never consumed (valid txs), so only fees are used, and they
+  refill automatically. Vary `--set concurrency.corpus_size=…`,
+  `submit.tps=…`, `submit.mode=rate`, or the targets between runs — no re-setup.
+
+A **new setup** is only needed when you change the Aiken validators (script
+hashes change), increase `io_setup`/`n_msm_indices` beyond what's deployed
+(`setup-bench --resume <dir>` tops those up idempotently instead of redoing
+everything), or target a different/respun network.
+
+The one ongoing resource is the **seed address's ADA**: each worst-case tx pays
+the protocol-minimum fee (dominated by the reference-script read and ExUnits it
+induces — a few ADA), so a run of N txs burns ≈ N × that. Everything else
+(fee-UTxO change, collateral, stake deposits, fixture min-UTxOs) is locked, not
+spent, and recycles. Refund the seed from a faucet when it runs low.
+
+> Status: proven end-to-end against the public Musashi (Leios) testnet —
+> setup → calibrate → repeatable run-bench, with worst-case txs accepted
+> on-chain. The 350-entry PlutusV3 cost model is required for the CPU/mem dials
+> (native `multiScalarMul` / `replicateByte`); see the caveat below. The
+> per-EB validation-timing analysis layer is still out of scope.
 
 ## Local devnet (optional)
 
