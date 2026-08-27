@@ -11,9 +11,10 @@ set up the on-chain fixtures (split UTxOs for concurrency, deploy reference
 scripts, register stake credentials, create big-datum UTxOs), then submit a
 corpus of re-submittable worst-case transactions while you measure the node.
 
-> Status: **core, network-agnostic.** Deferred: per-EB validation wall-clock
-> measurement, a bundled local devnet, and budget-sweep genesis overlays. See
-> [`docs/design.md`](docs/design.md).
+> Status: **core, network-agnostic**, plus a bundled Leios local devnet that
+> forges Endorser Blocks and enacts the 350-entry cost model via on-chain
+> governance (see below). Deferred: per-EB validation wall-clock measurement and
+> budget-sweep genesis overlays. See [`docs/design.md`](docs/design.md).
 
 ## How it works
 
@@ -139,21 +140,35 @@ spent, and recycles. Refund the seed from a faucet when it runs low.
 > (native `multiScalarMul` / `replicateByte`); see the caveat below. The
 > per-EB validation-timing analysis layer is still out of scope.
 
-## Local devnet (optional)
+## Local devnet (Leios, forges Endorser Blocks)
 
-No node to point at? `nix run "$FLAKE#local-devnet"` mints a **funded** single-node
-testnet using whatever `cardano-node`/`cardano-cli` are on your `PATH` (e.g. from
-`nix develop github:input-output-hk/ouroboros-leios#dev-testnet`) and emits a
-socket + funded `.skey` + a ready config:
+No node to point at? `nix run "$FLAKE#local-devnet"` mints a **funded, isolated,
+disposable** devnet using whatever `cardano-node`/`cardano-cli` are on your `PATH`
+(e.g. from `nix develop github:input-output-hk/ouroboros-leios#dev-testnet`) and
+emits a socket + funded `.skey` + a ready config:
 
 ```bash
 nix run "$FLAKE#local-devnet" -- --out-dir ./devnet --magic 42
 nix run "$FLAKE#setup-bench" -- --config ./devnet/pnb-config.json
+nix run "$FLAKE#local-devnet" -- --stop --out-dir ./devnet   # tear down
 ```
 
-See [`docs/local-devnet.md`](docs/local-devnet.md) — note the cost-model caveat:
-the CPU/mem dials need the 350-entry PlutusV3 model, which some local node builds
-don't boot (the plumbing works regardless).
+Unlike a plain devnet, it stands up everything the worst-case benchmark needs
+locally, against Endorser Blocks:
+
+- **Leios mode (default):** `--nodes N` (default 2) meshed block producers, each
+  with a BLS ("Leios") key registered to its pool, so they form a Leios committee
+  and **forge Endorser Blocks**. EBs endorse the tx backlog that overflows the
+  ranking block, so they appear once `run-bench` saturates the mempool. Use
+  `--no-leios` for a single plain-Praos node.
+- **350-entry cost model via governance:** the node can't take a 350-entry
+  PlutusV3 model at genesis, so the helper boots dijkstra/PV12 and enacts it with
+  an on-chain `ParameterChange` (it owns every DRep/committee key). This makes the
+  CPU/mem dials (native `multiScalarMul` / `replicateByte`) run locally.
+
+See [`docs/local-devnet.md`](docs/local-devnet.md) for the full flow, the
+BLS-key recipe, and the current node-build limits (EB Plutus budget ≈ 2× the
+per-tx limit; certificate quorum needs >2 nodes or uneven stake).
 
 ## Development
 
