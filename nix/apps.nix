@@ -19,7 +19,7 @@ let
   # local-devnet deliberately does NOT bundle a cardano-cli/node: it uses the
   # ones the user brings on PATH (e.g. the ouroboros-leios dev-testnet devshell),
   # overridable via --cardano-cli / --cardano-node. It only needs curl + jq etc.
-  devnetInputs = [ pkgs.bash pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnused pkgs.gawk ];
+  devnetInputs = [ pkgs.bash pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnused pkgs.gawk pkgs.python3 ];
 
   # `inputs` go on the front of PATH; `fallback` goes on the BACK so the user's
   # own binaries (e.g. the leios cardano-cli in a dev-testnet shell) take

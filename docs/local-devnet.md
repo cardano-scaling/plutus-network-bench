@@ -1,74 +1,82 @@
 # Local devnet
 
-`scripts/local-devnet.sh` (exposed as `nix run .#local-devnet`) spins up a
-**funded, single-node local testnet** and hands you exactly what `setup-bench`
-needs: a node socket and a funded payment `.skey`.
+`scripts/local-devnet.sh` (exposed as `nix run .#local-devnet`) stands up a
+**funded, isolated, block-producing devnet in the dijkstra era at PV12**, then
+**enacts the 350-entry PlutusV3 cost model via on-chain governance** — so the
+worst-case benchmark (native `multiScalarMul` / `replicateByte`) runs entirely
+locally. It hands `setup-bench` a socket + funded `.skey` via `pnb-config.json`.
 
-It is **decoupled from any node distribution**: it uses whatever `cardano-node`
-and `cardano-cli` are on your `PATH` — e.g. from
-`nix develop github:input-output-hk/ouroboros-leios#dev-testnet` — or the ones you
-pass with `--cardano-node` / `--cardano-cli`. plutus-network-bench does *not*
-take the Leios monorepo as a flake input.
-
-## Create vs. join
-
-Two different things, only the first gives you funds to benchmark with:
-
-- **Create (this helper).** `cardano-cli <era> genesis create-testnet-data` mints
-  a fresh genesis plus a **funded UTxO key you control** and a block producer, so
-  you can actually submit transactions. This is what benchmarking needs.
-- **Join a public network** (mainnet / Musashi). Download `config.json`,
-  `topology.json`, and the genesis files from the environment
-  (`https://book.play.dev.cardano.org/` / `cardano-playground`), then
-  `cardano-node run --config … --topology …`. You get a syncing node but **no
-  funds** — only useful here if you already hold a funded key on that network,
-  which you then pass straight to `setup-bench` (no devnet needed).
+It uses whatever `cardano-node` / `cardano-cli` are on your `PATH` (e.g. the
+`ouroboros-leios#dev-testnet` devshell) or `--cardano-node` / `--cardano-cli`;
+plutus-network-bench does not take the Leios monorepo as a flake input.
 
 ## Usage
 
 ```bash
-# in a shell where the leios cardano-node/cardano-cli are on PATH:
-nix develop github:input-output-hk/ouroboros-leios#dev-testnet
+nix develop github:input-output-hk/ouroboros-leios#dev-testnet   # node + cli on PATH
 
-nix run 'git+ssh://git@github.com/cardano-scaling/plutus-network-bench?ref=main#local-devnet' -- \
-  --out-dir ./devnet --magic 42
-# -> ./devnet/node.socket, ./devnet/gen/utxo-keys/utxo1/utxo.skey, ./devnet/pnb-config.json
+nix run "$FLAKE#local-devnet" -- --out-dir ./devnet --magic 42
+# -> ./devnet/pnb-config.json (socket + funded skey, V3 cost model = 350)
 
-nix run '…#setup-bench' -- --config ./devnet/pnb-config.json
+nix run "$FLAKE#setup-bench" -- --config ./devnet/pnb-config.json
+# then calibrate / run-bench against the printed state dir
+
+nix run "$FLAKE#local-devnet" -- --stop --out-dir ./devnet   # tear down
 ```
 
-Flags: `--out-dir`, `--magic`, `--era`, `--port`, `--total-supply`,
-`--cardano-node`, `--cardano-cli`, `--env-url` (config/topology/dijkstra-genesis
-template base; defaults to the public Leios environment), `--conway-spec`
-(supply a Conway genesis spec — see the cost-model caveat), `--no-launch`
-(materialise everything but don't start the node).
+Flags: `--out-dir`, `--magic`, `--port`, `--total-supply`, `--cardano-node`,
+`--cardano-cli`, `--env-url` (node-config + dijkstra-genesis template base),
+`--cost-model-file` (the 350-entry model to enact; defaults to the shipped
+`scripts/lib/costmodels-pv12.json`), `--skip-governance` (bring up a 251-model
+devnet for plumbing tests only), `--stop`.
+
+## Why governance (the crux)
+
+The 350-entry PlutusV3 cost model **cannot be set at genesis** on this node
+build. Two hard constraints, both verified against the live node:
+
+- The V3 parameter count is **protocol-version-gated** — the extra builtins
+  (`multiScalarMul`, `replicateByte`, …) exist only at **PV11+**, full set at
+  PV12 (see plutus `PlutusLedgerApi/V3/ParamName.hs`).
+- The node **hard-expects a 251-entry model in the conway genesis**
+  (`plutusV3CostModel`): injecting 350 there fails with *"Number of parameters
+  supplied 350 does not match the expected number of 251"*. Even at PV12 the
+  node defaults to 251.
+
+So 350 is reachable only by an **on-chain governance protocol-parameter update**,
+exactly as the public Musashi net did. On a local devnet we own every DRep /
+committee / SPO key, so this helper scripts it end to end.
 
 ## What it does
 
-1. `create-testnet-data` → `gen/{byron,shelley,alonzo,conway}-genesis.json`,
-   `gen/utxo-keys/utxo1/utxo.{skey,vkey}` (funded), `gen/pools-keys/pool1/…` (BP).
-2. Fetches `config.json`, `topology.json`, and `dijkstra-genesis.json` from
-   `--env-url`, then rewrites every `*GenesisFile` to the generated absolute paths
-   and every `*GenesisHash` to the recomputed value (byron via
-   `print-genesis-hash`, the rest via `<era> genesis hash`).
-3. Launches `cardano-node run` as a lone block producer (using the pool's
-   KES/VRF/opcert) and waits for the socket.
-4. Emits `pnb-config.json` wired to the socket + funded key.
+1. **genesis** — `create-testnet-data` with `--pools`, `--stake-delegators`
+   (active pool stake), `--drep-keys`, `--committee-keys`, `--utxo-keys`
+   (funded). Patches `shelley-genesis` to `protocolVersion.major = 12` and fast
+   local blocks (`slotLength 0.1`, `activeSlotsCoeff 0.1`, `epochLength 500`,
+   `securityParam 10`; epochLength stays ≥ 3·k/f).
+2. **config** — fetches only `config.json` + `dijkstra-genesis.json` from
+   `--env-url` (never the topology — it lists public relays), forces every era's
+   `TestXHardForkAtEpoch = 0` (incl. dijkstra) so the chain boots straight into
+   dijkstra/PV12, and rewrites genesis paths/hashes. Writes an **isolated**
+   topology (a `trustable` localRoot, no peers) — never dials a public net.
+3. **launch** — runs the lone block producer, waits for the socket and for the
+   first forged block.
+4. **govern** — submits a `ParameterChange` action setting `PlutusV3` to the
+   350-entry model, votes **yes with every DRep** (committee `threshold = 0` is
+   auto-approved; SPOs are disallowed voters for this action), and waits ~2–3
+   short epochs for ratification + enactment, confirming `V3 == 350`.
+   (`--skip-governance` stops after step 3 with the 251 model.)
+5. **emit** — writes `pnb-config.json` (era `dijkstra`).
 
-## Cost-model caveat (important)
+The governance proposal's anchor must be fetched over http by `transaction
+build` (file:// unsupported), so the helper briefly serves it from a local
+`python3 -m http.server` on a high port.
 
-`msm_main` uses native `bls12_381_G1_multiScalarMul` and `replicateByte`, which
-are **only priced under the 350-entry PlutusV3 cost model** (PV12+). Some node
-builds (e.g. the `11.1.0.164` prototype) boot **only the 251-entry model** and
-leave those builtins unpriced — any `msm_main` tx then instantly overspends.
+## Notes
 
-Consequences:
-
-- The **plumbing** — fan-out, io_ref reference scripts, registrations, read-only
-  reference inputs, tx-size padding — works on either model, so a 251-entry local
-  devnet is fine for shaking out `setup-bench` / `run-bench`.
-- The **CPU/mem dials** need a 350-entry model. Supply a Conway genesis spec that
-  carries the 350-entry `PlutusV3` cost model via `--conway-spec`, *and* a node
-  build that accepts it. If your node hard-requires 251 entries, do the full
-  benchmark against the public Musashi net (which has the 350-entry model via
-  governance) instead.
+- Re-running the same `--out-dir` stops any running node and wipes the db for a
+  clean respin; `--stop` tears down via the pidfile (process group).
+- Governance enactment takes a few short epochs (~50 s each) — the run blocks
+  until `V3 == 350`.
+- This mirrors Musashi's setup, so a local run and a Musashi run exercise the
+  same 350-entry model; the local one is just isolated and disposable.
