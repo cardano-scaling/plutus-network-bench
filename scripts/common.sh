@@ -154,6 +154,15 @@ pnb_init_state_new() {
 pnb_use_state_existing() {
   PNB_STATE="$(cfg '.run.state_dir')"
   [ -d "$PNB_STATE" ] || pnb_die "state dir not found: $PNB_STATE (pass --state-dir)"
+  # Inherit the config setup-bench resolved into this state dir (network
+  # magic/socket/era, io_setup, …) so calibrate/run-bench work from --state-dir
+  # alone — as the README documents. A live --config still wins; CLI overrides
+  # (--socket/--skey/--cardano-cli/--set) are re-applied on top either way.
+  if [ -z "${PNB_CONFIG_FILE}" ] && [ -f "$PNB_STATE/config.resolved.json" ]; then
+    PNB_CFG="$(jq -c . "$PNB_STATE/config.resolved.json")"
+    pnb_apply_overrides
+    pnb_log "loaded network/config from $PNB_STATE/config.resolved.json"
+  fi
 }
 
 # --- network / toolchain resolution -------------------------------------------
