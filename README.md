@@ -90,6 +90,41 @@ nix run "$FLAKE#run-bench" -- \
 # -> run-report.json (submitted / accepted / per-run tip delta)
 ```
 
+After `setup-bench`, `calibrate` and `run-bench` run from `--state-dir` alone —
+they inherit the network (magic/socket/era) and config that `setup-bench`
+resolved into that directory. Pass `--config`/`--socket`/`--set …` only to
+override.
+
+### What calibrate gives you, and how to use it
+
+`calibrate` writes `calibration.json`: a **knob → cost map** for the target
+network, fitting the per-tx budget each dial consumes —
+
+```
+ExSteps ≈ a_n·n + a_k·k + a_m·m + c      ExMem ≈ a_n·n + a_k·k + a_m·m + c
+  k = MSM passes (CPU)   m = replicateByte chunks (mem)   n = points·n_datums
+```
+
+You don't edit it or pick `k`/`m` by hand. Instead you state **targets** — a
+fraction of each per-tx budget (or an absolute value) — and `run-bench` inverts
+the fit to solve the exact `{k, m, n_datums, io_refs, pad}` that hit them:
+
+```json
+"targets": {
+  "ex_steps":         { "mode": "fraction", "value": 1.0 },   // phase-2 CPU
+  "ex_mem":           { "mode": "fraction", "value": 1.0 },   // phase-2 memory
+  "ref_script_bytes": { "mode": "fraction", "value": 0.95 },  // phase-1 IO
+  "tx_size":          { "mode": "fraction", "value": 0.95 }
+}
+```
+
+`1.0` = saturate that dimension per transaction (worst case). `mem` and `CPU`
+can both be maxed in the same tx (`m` is just a redeemer integer, so it costs
+memory without tx bytes); `ref_script_bytes` and `tx_size` are solved from
+geometry, not the fit. `run-bench` logs the `solved knobs: k=… m=… n_datums=…`
+it chose before building, so you can see the decision. Set `knobs_override` to
+skip solving and pin exact knobs for a reproducible run.
+
 `--config` is a path on your own filesystem (the flake doesn't copy the
 [`examples/`](examples) into your working directory); copy one as a starting
 point, or pass everything as flags (`--magic N --socket … --skey …`).
